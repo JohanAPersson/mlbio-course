@@ -1,0 +1,21 @@
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[project]
+name = "bioml"  # Behåll namnet från Fil 1 (UNDVIK rena siffror som "2026")
+version = "1.0.0"
+description = "BioML projekt"
+readme = "README.md"
+requires-python = ">=3.10"  # Sätt >=3.10 om du vill att det ska fungera i t.ex. Colab/servrar
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "scikit-learn",
+    "matplotlib"
+]
+
+[tool.uv]
+# Om du vill låsa beroenden lokalt men tillåta flexibilitet vid installation
+package = true
