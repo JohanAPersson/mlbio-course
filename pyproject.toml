@@ -1,6 +1,6 @@
 [build-system]
-requires = ["uv_build>=0.12.23,<0.13.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "bioml"  # Behåll namnet från Fil 1 (UNDVIK rena siffror som "2026")
@@ -16,6 +16,6 @@ dependencies = [
     "matplotlib"
 ]
 
-[tool.uv]
+# [tool.uv]
 # Om du vill låsa beroenden lokalt men tillåta flexibilitet vid installation
 package = true
