@@ -3,19 +3,28 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "bioml"  # Behåll namnet från Fil 1 (UNDVIK rena siffror som "2026")
+# Package name. Must be a valid Python identifier (not a bare number such as "2026").
+name = "bioml"
 version = "1.0.0"
-description = "BioML projekt"
+description = "Course package for ML for Bioprocesses: data loading, splitting, CV and plotting primitives."
 readme = "README.md"
-requires-python = ">=3.10"  # Sätt >=3.10 om du vill att det ska fungera i t.ex. Colab/servrar
+# >=3.10 so the package installs on Colab's current Python.
+requires-python = ">=3.10"
+# Deliberately unpinned: Colab already provides these. Pinning would make pip
+# replace Colab's versions and force a runtime restart during setup.
 dependencies = [
     "numpy",
     "pandas",
     "pyarrow",
     "scikit-learn",
-    "matplotlib"
+    "matplotlib",
 ]
 
-# [tool.uv]
-# Om du vill låsa beroenden lokalt men tillåta flexibilitet vid installation
+[tool.hatch.build.targets.wheel]
+# The source lives in src/bioml; it is installed as the top-level package "bioml".
+# Named explicitly so notebooks/ and scripts/ are never packaged.
+packages = ["src/bioml"]
+
+[tool.uv]
+# Build and install the project itself as a package when using uv locally.
 package = true
