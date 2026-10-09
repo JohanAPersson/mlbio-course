@@ -51,7 +51,7 @@ from .columns import resolve
 # The GitHub release holding the data files. Changing this value is a new
 # bioml release, never a silent edit (Decision 9: bioml is frozen in term).
 DATA_TAG = "data-v1"
-DATA_URL = f"https://github.com/OWNER/mlbio-course/releases/download/{DATA_TAG}"
+DATA_URL = f"https://github.com/JohanAPersson/mlbio-course/releases/download/{DATA_TAG}"
 
 # Placeholder repository owner. If it is still in the URL, hosting has not
 # been set up yet and every download would fail with an unhelpful 404.

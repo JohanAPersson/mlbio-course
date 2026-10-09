@@ -33,7 +33,7 @@ everyone else's.
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 from .align import align_batches
 from .columns import ALIASES, FORBIDDEN_AS_FEATURES, audit, resolve, resolve_many, try_resolve

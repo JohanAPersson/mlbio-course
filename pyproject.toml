@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 # Package name. Must be a valid Python identifier (not a bare number such as "2026").
 name = "bioml"
-version = "1.0.0"
+version = "1.0.1"
 description = "Course package for ML for Bioprocesses: data loading, splitting, CV and plotting primitives."
 readme = "README.md"
 # >=3.10 so the package installs on Colab's current Python.
