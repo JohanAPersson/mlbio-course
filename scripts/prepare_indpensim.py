@@ -139,6 +139,38 @@ exists and why it is airtight.
 
 Batch reference. Byte-identical to Batch ID. Redundant; kept and labelled.
 
+Broth withdrawals. 'Dumped broth flow(Fremoved:L/h)' is not zero. Every batch
+in the file has 3-9 withdrawal events, each 4,000 L/h for 2 h (8,000 L), the
+first at 100.2 h; a typical batch loses ~48,000 L in total, about as much as it
+started with. The column logs outflow as a NEGATIVE flow. The vessel volume is
+therefore a sawtooth, not a monotone fed-batch fill, and the vessel is an OPEN
+system: any mass balance on the amount of biomass or product in the vessel
+must add back what left through this stream. This script asserts the sign
+convention (Fremoved <= 0) and reports the withdrawal schedule in the manifest.
+
+Unit labels. Four column labels state the wrong unit or none. Found by physical
+reasoning, confirmed by reproducing the simulator's own calculation:
+
+    Aeration rate(Fg:L/h)                  values 20-75: m3/min, not L/h
+                                           (65 L/h would be ~1e-5 vessel
+                                           volumes per minute; 65 m3/min is
+                                           ~0.7 vvm, normal aeration)
+    Oxygen Uptake Rate(OUR:(g min^{-1}))   kg/min, not g/min
+    Oxygen in percent in off-gas(O2:...%)  a mole FRACTION (~0.19), not percent
+    Carbon evolution rate(CER:g/h)         not g/h; an empirical expression in
+                                           Fg, not a closed CO2 balance
+
+The OUR column is reproduced to float32 rounding by
+
+    OUR = (32/22.4) * Fg * (0.204 - y_O2 * 0.7902 / (1 - y_O2 - y_CO2/100))
+
+with Fg in m3/min, which gives kg/min. That is the formula in PenSimPy, the
+published Python port of IndPenSim; the MATLAB original was not inspected. This
+script asserts the reconstruction on every run, so a column shift or a changed
+source file fails loudly here rather than as a wrong rate in Week 1. The labels
+are NOT changed and NO values are rescaled: the columns are documented, in
+column_roles.csv and the manifest, as they are.
+
 ================================================================================
 5. USAGE
 
@@ -185,6 +217,45 @@ FLOAT64_KEEP = (TIME_COL,)
 # Tolerance for calling the time grid uniform, in hours. float64 parsing of
 # clean decimals lands well inside this; float32 does not.
 GRID_TOL_H = 1e-9
+
+# --- OUR reconstruction (see docstring section 4, "Unit labels") ------------
+# IndPenSim computes OUR from the off-gas, not from the biology. Reproducing it
+# from the aeration and off-gas columns is the strongest available check that
+# these columns are the ones their labels name, and in the units we document.
+O2_INLET_FRACTION = 0.204      # inlet O2 mole fraction used by the simulator's OUR formula
+N2_FACTOR = 0.7902             # inert (N2 + Ar) fraction in the simulator's formula
+GRAMS_O2_PER_MOLAR_VOLUME = 32.0 / 22.4   # g O2 per L of gas at STP; x m3/min gives kg/min
+OUR_RECON_TOL = 0.01           # kg/min; float32 storage alone gives ~1e-3
+
+# Column notes appended to the role reason in column_roles.csv. Units here are
+# the ones the data actually has; the labels are left as distributed.
+COLUMN_NOTES = {
+    "Aeration rate(Fg:L/h)": (
+        "UNIT LABEL WRONG: values are m3/min, not L/h (median 65 m3/min, about "
+        "0.7 vessel volumes per minute). The simulator converts it to m3/s for "
+        "the superficial gas velocity."
+    ),
+    "Oxygen Uptake Rate(OUR:(g min^{-1}))": (
+        "UNIT LABEL WRONG: kg/min for the whole vessel, not g/min. Reproduced to "
+        "float32 rounding from Fg (m3/min) and the off-gas composition; read as "
+        "g/min, specific O2 uptake comes out ~1000x below published values."
+    ),
+    "Oxygen in percent in off-gas(O2:O2  (%))": (
+        "UNIT LABEL WRONG: mole fraction (about 0.19), not percent. The CO2 "
+        "off-gas column, by contrast, really is in percent."
+    ),
+    "Carbon evolution rate(CER:g/h)": (
+        "UNIT LABEL WRONG and not a mass balance: an empirical expression in Fg "
+        "and off-gas CO2 with fitted constants, on a kg/min scale. Usable as a "
+        "trend signal; do not use it for respiratory quotients or carbon balances."
+    ),
+    "Dumped broth flow(Fremoved:L/h)": (
+        "SIGN CONVENTION: broth LEAVING the vessel is logged as a NEGATIVE flow. "
+        "Withdrawals of 4,000 L/h for 2 h from 100.2 h onward, 3-9 per batch. "
+        "The vessel is an open system: mass balances on amounts in the vessel "
+        "must add back what left here."
+    ),
+}
 
 # ------------------------------------------------------------------------------
 # Section A — header repair
@@ -311,6 +382,12 @@ def classify(names: list[str], constant_cols: set[str]) -> dict[str, tuple[str, 
             roles[name] = ("dead", "zero variance across the whole file")
         else:
             roles[name] = ("online_measurable", "available from a plant sensor")
+
+        # Facts about a column's units or sign convention are appended to the
+        # reason, whatever the role. They do not change what the column IS.
+        if name in COLUMN_NOTES:
+            role, reason = roles[name]
+            roles[name] = (role, f"{reason}. {COLUMN_NOTES[name]}")
     return roles
 
 
@@ -362,6 +439,8 @@ def inspect(path: Path, preview_rows: int = 3000):
         for c in cols:
             nan = sample[c].isna().mean() if c in sample else float("nan")
             flag = "  <-- LEAKS TARGET" if role == "simulator_state" else ""
+            if c in COLUMN_NOTES:
+                flag += "  <-- SEE UNIT/SIGN NOTE"
             print(f"    {c[:60]:<62} nan={nan:4.0%}{flag}")
 
     print("\n" + "-" * 78)
@@ -369,6 +448,8 @@ def inspect(path: Path, preview_rows: int = 3000):
     print("  - 'Batch ID' should have 100 unique values (checked during convert)")
     print("  - Temperature ~298 K, pH ~6.5, Volume 5.7e4-9.0e4 L")
     print("  - simulator_state columns are labelled, not deleted — that is deliberate")
+    print("  - four unit labels are wrong (Fg, OUR, O2 off-gas, CER) and Fremoved is")
+    print("    negative for outflow; see COLUMN_NOTES. Checked during convert.")
     print("-" * 78)
     return names, roles
 
@@ -381,7 +462,10 @@ PHYSICS_CHECKS = [
     ("Temperature(T:K)", 295.0, 303.0, "controlled at ~298 K"),
     ("pH(pH:pH)", 5.0, 7.5, "controlled at ~6.5"),
     ("Vessel Volume(V:L)", 4.0e4, 1.0e5, "fed-batch fill of a 100,000 L vessel"),
-    ("Oxygen in percent in off-gas(O2:O2  (%))", 0.10, 0.25, "~21% falling with respiration"),
+    # A mole fraction despite the '%' label: ~0.21 in air, falling with respiration.
+    ("Oxygen in percent in off-gas(O2:O2  (%))", 0.10, 0.25, "O2 mole fraction, ~0.21 falling"),
+    # m3/min despite the 'L/h' label: ~0.2-1 vessel volumes per minute.
+    ("Aeration rate(Fg:L/h)", 10.0, 100.0, "aeration in m3/min (label says L/h)"),
     ("Dissolved oxygen concentration(DO2:mg/L)", 0.0, 20.0, "aerobic culture"),
 ]
 
@@ -401,6 +485,99 @@ def to_float32(df: pd.DataFrame, exclude: tuple[str, ...] = FLOAT64_KEEP) -> pd.
     if len(cols):
         df[cols] = df[cols].astype("float32")
     return df
+
+
+def check_units_and_outflow(proc: pd.DataFrame, batch_col: str = BATCH_COL,
+                            time_col: str = TIME_COL) -> tuple[list[str], dict]:
+    """
+    Verify the documented units and the broth-withdrawal sign convention.
+
+    Returns (problems, report). `problems` is a list of messages; a non-empty
+    list means the column mapping or the unit documentation is wrong, and the
+    caller must refuse to write. `report` goes into the manifest.
+
+    Kept as a separate function so it can be run on an existing
+    process_vars.parquet, without the 2.57 GB source CSV.
+    """
+    problems: list[str] = []
+    report: dict = {}
+
+    def col(fragment: str) -> str | None:
+        """The one column whose name contains `fragment`, or None."""
+        hits = [c for c in proc.columns if fragment in c]
+        return hits[0] if len(hits) == 1 else None
+
+    fg, o2, co2 = col("(Fg:"), col("(O2:"), col("CO2outgas")
+    our, removed, vol = col("(OUR:"), col("Fremoved"), col("(V:L)")
+    missing = [n for n, c in [("Fg", fg), ("O2", o2), ("CO2", co2), ("OUR", our),
+                              ("Fremoved", removed), ("V", vol)] if c is None]
+    if missing:
+        return [f"cannot check units/outflow: columns not found: {missing}"], report
+
+    # --- off-gas O2 is a fraction ---------------------------------------------
+    o2_max = float(proc[o2].max())
+    if o2_max > 1.0:
+        problems.append(f"{o2}: max {o2_max:.3g} > 1, so it is NOT the mole "
+                        f"fraction documented in COLUMN_NOTES")
+
+    # --- OUR reconstruction: confirms Fg in m3/min and OUR in kg/min ----------
+    # float64 for the arithmetic: the stored columns are float32.
+    y_o2 = proc[o2].astype("float64")
+    y_co2 = proc[co2].astype("float64") / 100.0
+    our_calc = (GRAMS_O2_PER_MOLAR_VOLUME * proc[fg].astype("float64")
+                * (O2_INLET_FRACTION - y_o2 * N2_FACTOR / (1.0 - y_o2 - y_co2)))
+    err = (proc[our].astype("float64") - our_calc).abs()
+    max_err = float(err.max())
+    if not max_err < OUR_RECON_TOL:
+        problems.append(f"OUR reconstruction from Fg and off-gas failed: max error "
+                        f"{max_err:.3g} kg/min > {OUR_RECON_TOL}. Column mapping "
+                        f"or unit documentation is wrong.")
+    report["our_reconstruction"] = {
+        "formula": "OUR = (32/22.4) * Fg * (0.204 - y_O2 * 0.7902 / (1 - y_O2 - CO2%/100))",
+        "units": "Fg in m3/min -> OUR in kg/min",
+        "max_abs_error_kg_per_min": round(max_err, 6),
+        "median_abs_error_kg_per_min": round(float(err.median()), 6),
+    }
+
+    # --- broth withdrawals: sign convention and schedule ----------------------
+    f_rem = proc[removed].astype("float64")
+    if float(f_rem.max()) > 0.0:
+        problems.append(f"{removed}: positive values found; the documented "
+                        f"convention is outflow < 0")
+
+    def per_batch(g: pd.DataFrame) -> pd.Series:
+        """Withdrawal events, first withdrawal time and volume removed, one batch."""
+        out = g[removed] < 0
+        starts = out & ~out.shift(fill_value=False)        # rising edges of the outflow
+        dt = g[time_col].diff().fillna(0.0)                # h; 0 for the first row
+        return pd.Series({
+            "events": int(starts.sum()),
+            "first_h": float(g.loc[out, time_col].min()) if out.any() else float("nan"),
+            "removed_L": float(-(g[removed].astype("float64") * dt).sum()),
+            "v_start_L": float(g[vol].iloc[0]),
+        })
+
+    pb = proc.groupby(batch_col, sort=True).apply(per_batch)
+    report["broth_withdrawals"] = {
+        "column": removed,
+        "sign_convention": "negative = broth leaving the vessel",
+        "distinct_flow_values_L_per_h": sorted(float(v) for v in f_rem.unique())[:10],
+        "batches_with_withdrawals": int((pb["events"] > 0).sum()),
+        "events_per_batch": {"min": int(pb["events"].min()),
+                             "median": float(pb["events"].median()),
+                             "max": int(pb["events"].max())},
+        "first_withdrawal_h": {"min": float(pb["first_h"].min()),
+                               "max": float(pb["first_h"].max())},
+        "volume_removed_per_batch_L": {"median": round(float(pb["removed_L"].median()), 0)},
+        "starting_volume_L": {"median": round(float(pb["v_start_L"].median()), 0)},
+        "note": ("The vessel is an open system. A balance on the AMOUNT of biomass "
+                 "or product in the vessel must add back what left through this "
+                 "stream; otherwise every withdrawal reads as negative growth "
+                 "or negative productivity."),
+    }
+    report["unit_label_defects"] = {c: n for c, n in COLUMN_NOTES.items()
+                                    if n.startswith("UNIT LABEL WRONG")}
+    return problems, report
 
 
 def convert(path: Path, outdir: Path, chunksize: int, withhold_faults: bool,
@@ -467,6 +644,10 @@ def convert(path: Path, outdir: Path, chunksize: int, withhold_faults: bool,
         if mn < lo or mx > hi:
             problems.append(f"{col}: range [{mn:.4g}, {mx:.4g}] outside "
                             f"[{lo}, {hi}] — {why}")
+
+    # Units and outflow: structural, so a failure refuses to write.
+    unit_problems, unit_report = check_units_and_outflow(proc, batch_col, time_col)
+    problems.extend(unit_problems)
 
     if problems:
         print("\n" + "!" * 78)
@@ -593,6 +774,9 @@ def convert(path: Path, outdir: Path, chunksize: int, withhold_faults: bool,
         },
         "regimes": regimes,
         "batch_reference_identical_to_batch_id": ref_identical,
+        "unit_label_defects": unit_report.get("unit_label_defects"),
+        "our_reconstruction": unit_report.get("our_reconstruction"),
+        "broth_withdrawals": unit_report.get("broth_withdrawals"),
         "fault_labels_withheld": bool(withhold_faults and fault_cols),
         "dtype_note": "floats stored as float32; float64 would store noise at double cost",
     }
@@ -718,6 +902,23 @@ def _report(outdir, src_path, proc_path, raman_dir, m):
 
     if m.get("batch_reference_identical_to_batch_id"):
         print("\n  Batch reference is identical to Batch ID (redundant column).")
+
+    w = m.get("broth_withdrawals")
+    if w:
+        e = w["events_per_batch"]
+        print(f"\n  Broth withdrawals: {w['batches_with_withdrawals']} batches, "
+              f"{e['min']}-{e['max']} events each, first at "
+              f"{w['first_withdrawal_h']['min']} h; median "
+              f"{w['volume_removed_per_batch_L']['median']:,.0f} L removed per batch.")
+        print("    Fremoved < 0 is outflow. The vessel is an OPEN system.")
+    r = m.get("our_reconstruction")
+    if r:
+        print(f"\n  OUR reproduced from Fg and off-gas: max error "
+              f"{r['max_abs_error_kg_per_min']} kg/min ({r['units']}).")
+    if m.get("unit_label_defects"):
+        print("  Unit labels known to be wrong (labels kept, see column_roles.csv):")
+        for c in m["unit_label_defects"]:
+            print(f"    {c}")
 
     if m["offline_sampling"]:
         print("\n  Offline assay sampling:")

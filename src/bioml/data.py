@@ -50,7 +50,14 @@ from .columns import resolve
 
 # The GitHub release holding the data files. Changing this value is a new
 # bioml release, never a silent edit (Decision 9: bioml is frozen in term).
-DATA_TAG = "data-v1"
+#
+# History:
+#   data-v1  bioml 1.0.0-1.0.1  first release.
+#   data-v2  bioml 1.0.2        column_roles.csv and manifest.json document the
+#                               wrong unit labels (Fg, OUR, O2 off-gas, CER) and
+#                               the broth withdrawals (Decision 15). The values in
+#                               process_vars.parquet are unchanged from data-v1.
+DATA_TAG = "data-v2"
 DATA_URL = f"https://github.com/JohanAPersson/mlbio-course/releases/download/{DATA_TAG}"
 
 # Placeholder repository owner. If it is still in the URL, hosting has not
